@@ -290,6 +290,7 @@
     .stat b { font: 700 1.25rem "Space Grotesk", sans-serif; }
     .stat span { color: var(--muted); font-size: .81rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
     .inlines input { width: 140px; }
+    .form-row { display: grid; grid-template-columns: 1fr 150px; gap: 10px; }
     .table { border: 1px solid #223247; border-radius: 12px; overflow: auto; background: #0b121d; }
     table { width: 100%; border-collapse: collapse; min-width: 760px; }
     th {
@@ -347,7 +348,7 @@
     }
     @media (max-width: 700px) {
       body { padding: 12px; }
-      .grid4, .stats, .toolbar, .tools, .inlines { grid-template-columns: 1fr; display: grid; }
+      .grid4, .stats, .toolbar, .tools, .inlines, .form-row { grid-template-columns: 1fr; display: grid; }
       .inlines input, button { width: 100%; }
       .top-right { width: 100%; justify-content: space-between; }
       .donation-top { margin-bottom: 10px; }
@@ -410,7 +411,7 @@
         </div>
       </div>
       <div class="grid4">
-        <label class="field"><span data-i18n="label.apiBase">API Base URL</span><input id="baseUrl" type="text" placeholder="http://127.0.0.1:9002" /></label>
+        <label class="field"><span data-i18n="label.apiBase">API Base URL</span><input id="baseUrl" type="text" placeholder="Auto: current web host" /></label>
         <button class="g" id="saveCfg" data-i18n="btn.save">Save Config</button>
         <button class="p" id="checkBtn" data-i18n="btn.check">Check Connection</button>
       </div>
@@ -432,7 +433,10 @@
         <section class="panel">
           <h2 data-i18n="section.create">Create Proxy</h2>
           <form class="form" id="createForm">
-            <label class="field"><span data-i18n="label.groupName">Group name</span><input id="groupName" type="text" placeholder="group-main" required /></label>
+            <div class="form-row">
+              <label class="field"><span data-i18n="label.groupName">Group name</span><input id="groupName" type="text" placeholder="group-main" required /></label>
+              <label class="field"><span data-i18n="label.proxyCount">So proxy</span><input id="proxyCount" type="number" min="1" max="200" value="1" /></label>
+            </div>
             <label class="field"><span data-i18n="label.interface">Interface</span><select id="ifaceSelect"></select></label>
             <button class="p" type="submit" data-i18n="btn.create">Create proxy</button>
           </form>

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import asyncio
+import os
 import sqlite3
 import threading
 import uuid
@@ -17,6 +20,9 @@ from utils.generate_ipv6 import (
     ensure_admin_permission,
     generate_ipv6_addresses,
     get_adapters_ipv4,
+    get_default_adapter_name,
+    get_platform_name,
+    is_admin,
     get_ipv6_by_card_name,
     remove_ipv6_address,
 )
@@ -186,13 +192,19 @@ async def emit_proxy_snapshot():
 # =========================
 class ProxyCreate(BaseModel):
     group_name: str
-    interface_name: str = "Ethernet"
+    interface_name: str | None = None
+    count: int = 1
 
 
 # =========================
 # Services
 # =========================
-async def svc_create_proxy(group_name: str, interface_name: str, request_id: str):
+async def svc_create_proxy(group_name: str, interface_name: str | None, request_id: str):
+    interface_name = (interface_name or get_default_adapter_name()).strip()
+    if not interface_name:
+        msg = "Cannot auto-detect network interface. Please choose an adapter."
+        await emit_operation("proxy.create", "error", msg, request_id)
+        raise HTTPException(status_code=400, detail=msg)
     await emit_operation(
         "proxy.create",
         "started",
@@ -201,7 +213,7 @@ async def svc_create_proxy(group_name: str, interface_name: str, request_id: str
         {"group_name": group_name, "interface_name": interface_name},
     )
 
-    generated = generate_ipv6_addresses(1)
+    generated = generate_ipv6_addresses(1, interface_name)
     if not generated:
         msg = "Cannot generate IPv6 address"
         await emit_operation("proxy.create", "error", msg, request_id)
@@ -235,6 +247,25 @@ async def svc_create_proxy(group_name: str, interface_name: str, request_id: str
     except Exception as exc:
         await emit_operation("proxy.create", "error", str(exc), request_id)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+async def svc_create_many(group_name: str, interface_name: str | None, count: int, request_id: str):
+    safe_count = max(1, min(int(count or 1), 200))
+    created = []
+    errors = []
+
+    for index in range(safe_count):
+        child_request_id = f"{request_id}-{index + 1}"
+        try:
+            created.append(await svc_create_proxy(group_name, interface_name, child_request_id))
+        except HTTPException as exc:
+            errors.append({"index": index + 1, "error": exc.detail})
+            break
+
+    result = {"requested": safe_count, "created": created, "errors": errors}
+    if not created and errors:
+        raise HTTPException(status_code=500, detail=errors[0]["error"])
+    return result
 
 
 async def svc_run_all(request_id: str):
@@ -459,7 +490,7 @@ async def svc_rotate_port(port: int, request_id: str):
         stop_proxy(port)
         await remove_ipv6_address(old_ipv6, interface)
 
-        generated = generate_ipv6_addresses(1)
+        generated = generate_ipv6_addresses(1, interface)
         if not generated:
             msg = "Cannot generate IPv6 address"
             await emit_operation("proxy.rotate", "error", msg, request_id, {"port": port})
@@ -534,11 +565,29 @@ async def svc_remove_ipv6(card_name: str, ipv6_address: str, request_id: str):
     return result
 
 
+@app.get("/system/status")
+async def system_status():
+    adapters = get_adapters_ipv4()
+    default_adapter = get_default_adapter_name()
+    return {
+        "platform": get_platform_name(),
+        "is_admin": bool(is_admin()),
+        "default_adapter": default_adapter,
+        "adapter_count": len(adapters),
+        "host": os.getenv("PROXYV6_HOST", "0.0.0.0"),
+        "port": int(os.getenv("PROXYV6_PORT", "9002")),
+    }
+
+
 # =========================
 # HTTP API
 # =========================
 @app.post("/proxy/create")
 async def create_proxy_v6(data: ProxyCreate):
+    if data.count < 1 or data.count > 200:
+        raise HTTPException(status_code=400, detail="count must be from 1 to 200")
+    if data.count and data.count > 1:
+        return await svc_create_many(data.group_name, data.interface_name, data.count, new_request_id())
     return await svc_create_proxy(data.group_name, data.interface_name, new_request_id())
 
 
@@ -606,9 +655,17 @@ async def remove_ipv6_for_card(card_name: str, ipv6_address: str):
 async def execute_ws_command(action: str, payload: Dict[str, Any], request_id: str):
     if action == "proxy.create":
         group_name = (payload.get("group_name") or "").strip()
-        interface_name = (payload.get("interface_name") or "Ethernet").strip() or "Ethernet"
+        interface_name = (payload.get("interface_name") or "").strip() or None
+        try:
+            count = int(payload.get("count") or 1)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="count must be an integer")
+        if count < 1 or count > 200:
+            raise HTTPException(status_code=400, detail="count must be from 1 to 200")
         if not group_name:
             raise HTTPException(status_code=400, detail="group_name is required")
+        if count > 1:
+            return await svc_create_many(group_name, interface_name, count, request_id)
         return await svc_create_proxy(group_name, interface_name, request_id)
 
     if action == "proxy.run_all":
@@ -827,10 +884,12 @@ def client_script():
 
 
 def _main():
+    host = os.getenv("PROXYV6_HOST", "0.0.0.0")
+    port = int(os.getenv("PROXYV6_PORT", "9002"))
     uvicorn.run(
         app,
-        host="127.0.0.1",
-        port=9002,
+        host=host,
+        port=port,
         reload=False,
         log_level="info",
         access_log=False,

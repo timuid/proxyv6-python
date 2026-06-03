@@ -1,4 +1,4 @@
-﻿# Solumate Project
+# Solumate Project
 
 ## Language / Ngôn ngữ
 - Tiếng Việt
@@ -36,15 +36,139 @@ Một REST API viết bằng **FastAPI** cho phép:
 
 ---
 
+## Chạy 1 file Python tự động (khuyên dùng)
+
+Cách này dùng được cho **Windows hoặc Linux**. Script `run_proxyv6.py` sẽ tự động:
+
+- nhận diện hệ điều hành Windows/Linux,
+- tạo `venv` nếu chưa có,
+- cài/cập nhật `pip` và thư viện trong `requirements.txt`,
+- tự chọn card mạng mặc định,
+- mở web UI tại `http://127.0.0.1:9002`,
+- tự tạo và chạy **3 proxy IPv6** mặc định, bắt đầu từ port `10000`.
+
+### Windows
+
+Mở **PowerShell bằng Run as administrator**, vào thư mục project rồi chạy:
+
+```powershell
+python run_proxyv6.py
+```
+
+Hoặc bấm chuột phải `run_windows.bat` -> **Run as administrator**.
+
+### Linux
+
+Chạy bằng root/sudo để tool có quyền gán/xóa IPv6 trên card mạng:
+
+```bash
+sudo python3 run_proxyv6.py
+```
+
+### Tuỳ chọn nhanh
+
+Tạo đúng 3 proxy trên card tự nhận:
+
+```bash
+python run_proxyv6.py --count 3
+```
+
+Chỉ cài thư viện, mở UI, không tự tạo proxy:
+
+```bash
+python run_proxyv6.py --no-auto-create
+```
+
+Chỉ định card mạng và group:
+
+```bash
+python run_proxyv6.py --interface Ethernet --group group-main --count 3
+```
+
+Trong UI, ô **Số proxy** cho phép tạo nhiều proxy một lần; nút **Xoay** trong bảng hoặc **Xoay theo port** sẽ remove IPv6 cũ, add IPv6 mới và chạy lại proxy giữ nguyên port.
+
+---
+
+## Chạy nhanh trên Windows (dễ nhất)
+
+Nếu bạn dùng Windows và chưa quen lệnh `pip`, hãy làm theo cách này:
+
+### Cách 1: Chạy tự động bằng file `.bat`
+
+1. Cài **Python 3.9+** từ trang Python chính thức.
+2. Khi cài Python, nhớ tick **Add python.exe to PATH**.
+3. Tải/mở thư mục source code này.
+4. Bấm chuột phải vào `run_windows.bat` -> chọn **Run as administrator**.
+5. File `.bat` sẽ tự động:
+   - kiểm tra Python,
+   - tạo thư mục `venv`,
+   - cài/cập nhật `pip`,
+   - cài thư viện trong `requirements.txt`,
+   - mở web tại `http://127.0.0.1:9002`.
+
+Nếu chỉ xem giao diện hoặc API không cần thêm/xóa IPv6, bạn có thể chạy bình thường. Nếu muốn tạo/xóa IPv6 trên card mạng, nên chạy bằng **Run as administrator**.
+
+### Cách 2: Chạy thủ công bằng PowerShell
+
+Mở **PowerShell** trong thư mục project, sau đó chạy từng lệnh:
+
+```powershell
+python --version
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip
+python -m venv venv
+.\venv\Scripts\activate
+python -m pip install -r requirements.txt
+python server.py
+```
+
+Sau khi server chạy, mở trình duyệt:
+
+```text
+http://127.0.0.1:9002
+```
+
+Nếu Windows báo không nhận lệnh `python`, hãy thử:
+
+```powershell
+py -3 --version
+py -3 -m pip install --upgrade pip
+py -3 -m venv venv
+.\venv\Scripts\activate
+python -m pip install -r requirements.txt
+python server.py
+```
+
+### Lỗi thường gặp trên Windows
+
+- **Không có pip**: chạy `python -m ensurepip --upgrade`, sau đó chạy lại `python -m pip install --upgrade pip`.
+- **Không nhận lệnh python**: cài lại Python và tick **Add python.exe to PATH**, hoặc dùng lệnh `py -3`.
+- **Không tạo/xóa được IPv6**: tắt server, mở lại PowerShell hoặc `run_windows.bat` bằng **Run as administrator**.
+- **Không vào được web từ máy khác trong LAN**: kiểm tra firewall Windows và mở port `9002` nếu cần.
+
+---
+
 ## Yêu cầu hệ thống
 
 - Python 3.9+
-- Windows (cần quyền Administrator để thêm/xóa IPv6)
+- Windows hoặc Linux
+- Quyền Administrator trên Windows hoặc quyền root/sudo trên Linux để thêm/xóa IPv6
+- Linux cần gói `iproute2` để dùng lệnh `ip`
 - Các thư viện Python (xem `requirements.txt`)
 
-Cài đặt:
+Cài đặt trên Windows:
+
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+python -m pip install -r requirements.txt
+```
+
+Cài đặt trên Linux:
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
@@ -54,6 +178,8 @@ python -m pip install -r requirements.txt
 
 ```text
 project/
+|-- run_proxyv6.py        # Chạy 1 file: tạo venv, cài libs, mở UI, auto tạo 3 proxy
+|-- run_windows.bat       # Chạy nhanh trên Windows: gọi run_proxyv6.py
 |-- server.py              # FastAPI server (API endpoints + websocket)
 |-- client.html            # UI dashboard
 |-- client.js              # UI logic + realtime socket
@@ -71,19 +197,28 @@ project/
 
 ## Chạy server
 
-```bash
+Windows (mở PowerShell bằng Run as Administrator nếu cần tạo/xóa IPv6):
+
+```powershell
 python server.py
 ```
 
-hoặc
+Linux (chạy root/sudo nếu cần tạo/xóa IPv6):
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 9002
+sudo venv/bin/python server.py
 ```
 
-- Web UI: `http://127.0.0.1:9002`
-- API base: `http://127.0.0.1:9002`
-- WebSocket realtime: `ws://127.0.0.1:9002/ws/events`
+hoặc tự chọn host/port:
+
+```bash
+PROXYV6_HOST=0.0.0.0 PROXYV6_PORT=9002 uvicorn server:app --host 0.0.0.0 --port 9002
+```
+
+- Web UI local: `http://127.0.0.1:9002`
+- Web UI từ máy khác trong LAN: `http://<IP-may-chu>:9002`
+- API base: tự nhận theo host đang mở Web UI, hoặc nhập thủ công trong ô API Base URL
+- WebSocket realtime: `ws://<host>:9002/ws/events`
 
 ---
 
@@ -91,7 +226,7 @@ uvicorn server:app --host 0.0.0.0 --port 9002
 
 ### Proxy Management
 
-- `POST /proxy/create` -> Tạo mới proxy với IPv6 random
+- `POST /proxy/create` -> Tạo mới 1 hoặc nhiều proxy với IPv6 random (`count` mặc định là 1)
 - `POST /proxy/run_all` -> Chạy toàn bộ proxy trong DB
 - `POST /proxy/run_by_ids` -> Chạy proxy theo danh sách id
 - `POST /proxy/stop_by_ids` -> Dừng proxy theo danh sách id
@@ -122,7 +257,8 @@ curl --location 'http://127.0.0.1:9002/proxy/create' \
 --header 'Content-Type: application/json' \
 --data '{
   "group_name": "group1",
-  "interface_name": "Ethernet"
+  "interface_name": "Ethernet",
+  "count": 3
 }'
 ```
 
@@ -194,7 +330,9 @@ curl --location --request DELETE 'http://127.0.0.1:9002/network/adapters/Etherne
 
 ## Lưu ý
 
-- Cần chạy bằng **Administrator** để thêm hoặc xóa IPv6 vào interface.
+- Windows cần chạy bằng **Administrator** để thêm hoặc xóa IPv6 vào interface.
+- Linux cần chạy bằng **root/sudo** và cần lệnh `ip` (`iproute2`) để thêm/xóa IPv6 vào interface.
+- Trên Linux, tên interface thường là `eth0`, `ens18`, `enp0s3`, ... thay vì `Ethernet`.
 - Nếu máy không có kết nối IPv6 public, proxy có thể không hoạt động đúng.
 - Database SQLite lưu trong thư mục `data/ipv6_address.db`.
 
