@@ -36,6 +36,66 @@ Một REST API viết bằng **FastAPI** cho phép:
 
 ---
 
+
+## Chạy nhanh trên Windows (dễ nhất)
+
+Nếu bạn dùng Windows và chưa quen lệnh `pip`, hãy làm theo cách này:
+
+### Cách 1: Chạy tự động bằng file `.bat`
+
+1. Cài **Python 3.9+** từ trang Python chính thức.
+2. Khi cài Python, nhớ tick **Add python.exe to PATH**.
+3. Tải/mở thư mục source code này.
+4. Bấm chuột phải vào `run_windows.bat` -> chọn **Run as administrator**.
+5. File `.bat` sẽ tự động:
+   - kiểm tra Python,
+   - tạo thư mục `venv`,
+   - cài/cập nhật `pip`,
+   - cài thư viện trong `requirements.txt`,
+   - mở web tại `http://127.0.0.1:9002`.
+
+Nếu chỉ xem giao diện hoặc API không cần thêm/xóa IPv6, bạn có thể chạy bình thường. Nếu muốn tạo/xóa IPv6 trên card mạng, nên chạy bằng **Run as administrator**.
+
+### Cách 2: Chạy thủ công bằng PowerShell
+
+Mở **PowerShell** trong thư mục project, sau đó chạy từng lệnh:
+
+```powershell
+python --version
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip
+python -m venv venv
+.\venv\Scripts\activate
+python -m pip install -r requirements.txt
+python server.py
+```
+
+Sau khi server chạy, mở trình duyệt:
+
+```text
+http://127.0.0.1:9002
+```
+
+Nếu Windows báo không nhận lệnh `python`, hãy thử:
+
+```powershell
+py -3 --version
+py -3 -m pip install --upgrade pip
+py -3 -m venv venv
+.\venv\Scripts\activate
+python -m pip install -r requirements.txt
+python server.py
+```
+
+### Lỗi thường gặp trên Windows
+
+- **Không có pip**: chạy `python -m ensurepip --upgrade`, sau đó chạy lại `python -m pip install --upgrade pip`.
+- **Không nhận lệnh python**: cài lại Python và tick **Add python.exe to PATH**, hoặc dùng lệnh `py -3`.
+- **Không tạo/xóa được IPv6**: tắt server, mở lại PowerShell hoặc `run_windows.bat` bằng **Run as administrator**.
+- **Không vào được web từ máy khác trong LAN**: kiểm tra firewall Windows và mở port `9002` nếu cần.
+
+---
+
 ## Yêu cầu hệ thống
 
 - Python 3.9+
@@ -66,6 +126,7 @@ python -m pip install -r requirements.txt
 
 ```text
 project/
+|-- run_windows.bat       # Chạy nhanh trên Windows: tạo venv, cài pip/libs, mở web
 |-- server.py              # FastAPI server (API endpoints + websocket)
 |-- client.html            # UI dashboard
 |-- client.js              # UI logic + realtime socket
