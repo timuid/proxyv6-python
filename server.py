@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sqlite3
 import threading
 import uuid
@@ -827,10 +828,12 @@ def client_script():
 
 
 def _main():
+    host = os.getenv("PROXYV6_HOST", "0.0.0.0")
+    port = int(os.getenv("PROXYV6_PORT", "9002"))
     uvicorn.run(
         app,
-        host="127.0.0.1",
-        port=9002,
+        host=host,
+        port=port,
         reload=False,
         log_level="info",
         access_log=False,
