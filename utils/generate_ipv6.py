@@ -1,8 +1,13 @@
-import base64
 import asyncio
+import base64
 import ctypes
+import ipaddress
+import json
+import os
+import platform
 import random
 import re
+import shutil
 import subprocess
 import time
 
@@ -14,27 +19,44 @@ _cached_ip = None
 _cached_time = 0
 
 
+def _is_windows() -> bool:
+    return platform.system().lower() == "windows"
+
+
+def _is_linux() -> bool:
+    return platform.system().lower() == "linux"
+
+
 def is_admin():
-    """Check if the script is running with administrator privileges."""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except Exception:
-        return False
+    """Check if the script is running with administrator/root privileges."""
+    if _is_windows():
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except Exception:
+            return False
+
+    if hasattr(os, "geteuid"):
+        return os.geteuid() == 0
+
+    return False
 
 
 def _ps_escape(value: str) -> str:
     return str(value).replace("'", "''")
 
 
-def _run_powershell(command: str):
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-        text=True,
-        capture_output=True,
-    )
+def _run_checked(command, **kwargs):
+    result = subprocess.run(command, text=True, capture_output=True, **kwargs)
     if result.returncode != 0:
         output = (result.stderr or result.stdout or "Unknown error").strip()
         raise RuntimeError(output)
+    return result
+
+
+def _run_powershell(command: str):
+    _run_checked(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
+    )
 
 
 def _run_powershell_with_uac(command: str):
@@ -44,17 +66,23 @@ def _run_powershell_with_uac(command: str):
         "$p = Start-Process -FilePath 'powershell' -Verb RunAs -ArgumentList $arg -Wait -PassThru; "
         "exit $p.ExitCode"
     )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launcher_script],
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        output = (result.stderr or result.stdout or "Unknown error").strip()
+    try:
+        _run_checked(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                launcher_script,
+            ]
+        )
+    except RuntimeError as exc:
+        output = str(exc)
         lowered = output.lower()
         if "canceled" in lowered or "cancelled" in lowered or "1223" in lowered:
             raise PermissionError("Administrator permission was canceled by user.")
-        raise RuntimeError(output)
+        raise
 
 
 def _run_with_optional_uac(command: str):
@@ -64,17 +92,34 @@ def _run_with_optional_uac(command: str):
         _run_powershell_with_uac(command)
 
 
+def _require_ip_command():
+    if not shutil.which("ip"):
+        raise RuntimeError("Linux requires the 'ip' command from iproute2.")
+
+
+def _run_ip_command(args):
+    _require_ip_command()
+    return _run_checked(["ip", *args])
+
+
 async def ensure_admin_permission():
     if is_admin():
         return
 
-    command = "Write-Output 'admin-check' | Out-Null"
-    try:
-        await asyncio.to_thread(_run_powershell_with_uac, command)
-    except PermissionError:
-        raise RuntimeError("UAC was canceled. Please allow Administrator permission.")
-    except RuntimeError as exc:
-        raise RuntimeError(f"Administrator check failed: {exc}")
+    if _is_windows():
+        command = "Write-Output 'admin-check' | Out-Null"
+        try:
+            await asyncio.to_thread(_run_powershell_with_uac, command)
+        except PermissionError:
+            raise RuntimeError("UAC was canceled. Please allow Administrator permission.")
+        except RuntimeError as exc:
+            raise RuntimeError(f"Administrator check failed: {exc}")
+        return
+
+    if _is_linux():
+        raise RuntimeError("Root permission is required on Linux. Run the server with sudo/root.")
+
+    raise RuntimeError("Administrator/root permission is required on this operating system.")
 
 
 def generate_ipv6_addresses(count=1):
@@ -82,14 +127,18 @@ def generate_ipv6_addresses(count=1):
     if not base_ipv6:
         return []
 
-    components = base_ipv6.split(":")
+    try:
+        base_ip = ipaddress.IPv6Address(base_ipv6)
+    except ipaddress.AddressValueError:
+        return []
+
+    network = ipaddress.IPv6Network(f"{base_ip}/64", strict=False)
     generated = []
     for _ in range(count):
-        new = components.copy()
-        new[4] = f"{random.randint(0x1000, 0xFFFF):x}"
-        new[5] = f"{random.randint(0x1000, 0xFFFF):x}"
-        new[-1] = f"{random.randint(0x1, 0xFFFF):x}"
-        generated.append(":".join(new))
+        host_id = random.getrandbits(64)
+        if host_id == 0:
+            host_id = 1
+        generated.append(str(ipaddress.IPv6Address(int(network.network_address) + host_id)))
     return generated
 
 
@@ -105,7 +154,7 @@ def get_ethernet_ipv6_addresses() -> str:
             response = client.get("https://api64.ipify.org/?format=json")
             response.raise_for_status()
             ip = response.json().get("ip")
-            if ip:
+            if ip and ":" in ip:
                 _cached_ip = ip
                 _cached_time = time.time()
                 return ip
@@ -116,43 +165,81 @@ def get_ethernet_ipv6_addresses() -> str:
 
 
 async def add_ipv6_to_ethernet(ipv6_address, interface_name="Ethernet"):
-    interface = _ps_escape(interface_name)
-    ipv6 = _ps_escape(ipv6_address)
+    if _is_windows():
+        interface = _ps_escape(interface_name)
+        ipv6 = _ps_escape(ipv6_address)
 
-    command = (
-        f"New-NetIPAddress -InterfaceAlias '{interface}' -IPAddress '{ipv6}' -AddressFamily IPv6 -ErrorAction Stop; "
-        f"Set-DnsClientServerAddress -InterfaceAlias '{interface}' -ServerAddresses @('2001:4860:4860::8888','2001:4860:4860::8844') -ErrorAction Stop"
-    )
+        command = (
+            f"New-NetIPAddress -InterfaceAlias '{interface}' -IPAddress '{ipv6}' -AddressFamily IPv6 -ErrorAction Stop; "
+            f"Set-DnsClientServerAddress -InterfaceAlias '{interface}' -ServerAddresses @('2001:4860:4860::8888','2001:4860:4860::8844') -ErrorAction Stop"
+        )
 
-    try:
-        await asyncio.to_thread(_run_with_optional_uac, command)
-    except PermissionError:
-        raise RuntimeError("UAC was canceled. Please allow Administrator permission.")
-    except RuntimeError as exc:
-        raise RuntimeError(f"Add IPv6 failed: {exc}")
+        try:
+            await asyncio.to_thread(_run_with_optional_uac, command)
+        except PermissionError:
+            raise RuntimeError("UAC was canceled. Please allow Administrator permission.")
+        except RuntimeError as exc:
+            raise RuntimeError(f"Add IPv6 failed: {exc}")
+        return
+
+    if _is_linux():
+        if not is_admin():
+            raise RuntimeError("Root permission is required on Linux to add IPv6 addresses.")
+        try:
+            await asyncio.to_thread(
+                _run_ip_command,
+                ["-6", "addr", "add", f"{ipv6_address}/64", "dev", interface_name],
+            )
+        except RuntimeError as exc:
+            lowered = str(exc).lower()
+            if "file exists" in lowered:
+                return
+            raise RuntimeError(f"Add IPv6 failed: {exc}")
+        return
+
+    raise RuntimeError(f"Unsupported operating system: {platform.system()}")
 
 
 async def remove_ipv6_address(ipv6_address, interface_name="Ethernet"):
-    interface = _ps_escape(interface_name)
-    ipv6 = _ps_escape(ipv6_address)
+    if _is_windows():
+        interface = _ps_escape(interface_name)
+        ipv6 = _ps_escape(ipv6_address)
 
-    command = (
-        f"Remove-NetIPAddress -InterfaceAlias '{interface}' -IPAddress '{ipv6}' "
-        "-AddressFamily IPv6 -Confirm:$false -ErrorAction Stop"
-    )
+        command = (
+            f"Remove-NetIPAddress -InterfaceAlias '{interface}' -IPAddress '{ipv6}' "
+            "-AddressFamily IPv6 -Confirm:$false -ErrorAction Stop"
+        )
 
-    try:
-        await asyncio.to_thread(_run_with_optional_uac, command)
-    except PermissionError:
-        raise RuntimeError("UAC was canceled. Please allow Administrator permission.")
-    except RuntimeError as exc:
-        lowered = str(exc).lower()
-        if "no matching msft_netipaddress" in lowered:
-            return
-        raise RuntimeError(f"Remove IPv6 failed: {exc}")
+        try:
+            await asyncio.to_thread(_run_with_optional_uac, command)
+        except PermissionError:
+            raise RuntimeError("UAC was canceled. Please allow Administrator permission.")
+        except RuntimeError as exc:
+            lowered = str(exc).lower()
+            if "no matching msft_netipaddress" in lowered:
+                return
+            raise RuntimeError(f"Remove IPv6 failed: {exc}")
+        return
+
+    if _is_linux():
+        if not is_admin():
+            raise RuntimeError("Root permission is required on Linux to remove IPv6 addresses.")
+        try:
+            await asyncio.to_thread(
+                _run_ip_command,
+                ["-6", "addr", "del", f"{ipv6_address}/64", "dev", interface_name],
+            )
+        except RuntimeError as exc:
+            lowered = str(exc).lower()
+            if "cannot assign requested address" in lowered or "not found" in lowered:
+                return
+            raise RuntimeError(f"Remove IPv6 failed: {exc}")
+        return
+
+    raise RuntimeError(f"Unsupported operating system: {platform.system()}")
 
 
-def get_adapters_ipv4():
+def _get_windows_adapters_ipv4():
     result = subprocess.run(
         ["ipconfig"], capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -181,7 +268,39 @@ def get_adapters_ipv4():
     return adapters
 
 
-def get_adapters_ipv6(debug: bool = False):
+def _linux_addr_json(*args):
+    _require_ip_command()
+    result = _run_checked(["ip", "-j", *args])
+    return json.loads(result.stdout or "[]")
+
+
+def _get_linux_adapters_ipv4():
+    if not shutil.which("ip"):
+        return []
+
+    adapters = []
+    for item in _linux_addr_json("-4", "addr", "show"):
+        if item.get("operstate") == "DOWN":
+            continue
+        info = {"card_name": item.get("ifname", "")}
+        for addr in item.get("addr_info", []):
+            if addr.get("family") == "inet" and addr.get("local"):
+                info["ipv4"] = addr["local"]
+                break
+        if info.get("card_name") and info.get("ipv4"):
+            adapters.append(info)
+    return adapters
+
+
+def get_adapters_ipv4():
+    if _is_windows():
+        return _get_windows_adapters_ipv4()
+    if _is_linux():
+        return _get_linux_adapters_ipv4()
+    return []
+
+
+def _get_windows_adapters_ipv6(debug: bool = False):
     result = subprocess.run(
         ["ipconfig"], capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -215,18 +334,13 @@ def get_adapters_ipv6(debug: bool = False):
 
             if "IPv6 Address" in line or "Temporary IPv6 Address" in line:
                 parts = line.split(":", 1)
-                if debug:
-                    print(f"--> Split parts (limit=1): {parts}")
                 if len(parts) == 2:
-                    addr = parts[1].strip()
-                    addr = addr.split("%")[0]
+                    addr = parts[1].strip().split("%")[0]
                     addr_type = (
                         "Temporary IPv6 Address"
                         if "Temporary" in line
                         else "IPv6 Address"
                     )
-                    if debug:
-                        print(f"--> Detected {addr_type}: {addr}")
                     ipv6_list.append({"type": addr_type, "value": addr})
 
     if current_adapter and ipv6_list:
@@ -234,6 +348,36 @@ def get_adapters_ipv6(debug: bool = False):
         adapters.append(adapter_info)
 
     return adapters
+
+
+def _get_linux_adapters_ipv6():
+    if not shutil.which("ip"):
+        return []
+
+    adapters = []
+    for item in _linux_addr_json("-6", "addr", "show"):
+        ipv6_list = []
+        for addr in item.get("addr_info", []):
+            if addr.get("family") != "inet6" or not addr.get("local"):
+                continue
+            scope = addr.get("scope", "global")
+            ipv6_list.append(
+                {
+                    "type": "IPv6 Address" if scope == "global" else f"IPv6 Address ({scope})",
+                    "value": addr["local"].split("%")[0],
+                }
+            )
+        if ipv6_list:
+            adapters.append({"card_name": item.get("ifname", ""), "ipv6": ipv6_list})
+    return adapters
+
+
+def get_adapters_ipv6(debug: bool = False):
+    if _is_windows():
+        return _get_windows_adapters_ipv6(debug)
+    if _is_linux():
+        return _get_linux_adapters_ipv6()
+    return []
 
 
 def get_ipv6_by_card_name(card_name: str):

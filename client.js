@@ -394,8 +394,15 @@ function setLanguage(lang) {
   renderProxies();
 }
 
+function getDefaultApiBase() {
+  if (window.location && window.location.origin && window.location.origin !== "null") {
+    return window.location.origin;
+  }
+  return "http://127.0.0.1:9002";
+}
+
 function initCfg() {
-  refs.baseUrl.value = localStorage.getItem("proxy_api_base_url") || "http://127.0.0.1:9002";
+  refs.baseUrl.value = localStorage.getItem("proxy_api_base_url") || getDefaultApiBase();
   refs.groupName.value = localStorage.getItem("proxy_group_name") || "group-main";
   const storedLang = (localStorage.getItem("proxy_ui_lang") || "vi").toLowerCase();
   state.lang = storedLang === "en" ? "en" : "vi";
