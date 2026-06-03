@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   adapters: [],
   selectedAdapter: "",
   ipv6Items: [],
@@ -39,6 +39,7 @@ const refs = {
   createForm: $("createForm"),
   createBtn: $("createForm").querySelector('button[type="submit"]'),
   groupName: $("groupName"),
+  proxyCount: $("proxyCount"),
   ifaceSelect: $("ifaceSelect"),
   refreshProxies: $("refreshProxies"),
   runAll: $("runAll"),
@@ -73,6 +74,7 @@ const I18N = {
     "status.disconnected": "Mat ket noi",
     "label.apiBase": "API Base URL",
     "label.groupName": "Ten nhom",
+    "label.proxyCount": "So proxy",
     "label.interface": "Card mang",
     "section.adapters": "Card mang",
     "section.create": "Tao Proxy",
@@ -145,6 +147,7 @@ const I18N = {
     "msg.removeIpv6Confirm": "Xoa {ipv6} khoi {card_name}?",
     "msg.removeIpv6Fail": "Xoa IPv6 loi: {error}",
     "msg.groupRequired": "Vui long nhap group name",
+    "msg.countInvalid": "So proxy phai tu 1 den 200",
     "msg.interfaceRequired": "Vui long chon card mang",
     "msg.createProxyFail": "Tao proxy loi: {error}",
     "msg.loadProxyFail": "Tai danh sach proxy loi: {error}",
@@ -207,6 +210,7 @@ const I18N = {
     "status.disconnected": "Disconnected",
     "label.apiBase": "API Base URL",
     "label.groupName": "Group name",
+    "label.proxyCount": "Proxy count",
     "label.interface": "Interface",
     "section.adapters": "Network Adapters",
     "section.create": "Create Proxy",
@@ -394,9 +398,17 @@ function setLanguage(lang) {
   renderProxies();
 }
 
+function getDefaultApiBase() {
+  if (window.location && window.location.origin && window.location.origin !== "null") {
+    return window.location.origin;
+  }
+  return "http://127.0.0.1:9002";
+}
+
 function initCfg() {
-  refs.baseUrl.value = localStorage.getItem("proxy_api_base_url") || "http://127.0.0.1:9002";
+  refs.baseUrl.value = localStorage.getItem("proxy_api_base_url") || getDefaultApiBase();
   refs.groupName.value = localStorage.getItem("proxy_group_name") || "group-main";
+  refs.proxyCount.value = localStorage.getItem("proxy_count") || "1";
   const storedLang = (localStorage.getItem("proxy_ui_lang") || "vi").toLowerCase();
   state.lang = storedLang === "en" ? "en" : "vi";
   if (refs.langSelect) {
@@ -408,6 +420,7 @@ function initCfg() {
 function saveCfg() {
   localStorage.setItem("proxy_api_base_url", refs.baseUrl.value.trim());
   localStorage.setItem("proxy_group_name", refs.groupName.value.trim());
+  localStorage.setItem("proxy_count", refs.proxyCount.value.trim() || "1");
   localStorage.setItem("proxy_ui_lang", state.lang);
   toast(t("msg.configSaved"), "ok");
   connectSocket(true);
@@ -1091,8 +1104,14 @@ async function createProxy(ev) {
   ev.preventDefault();
   const group = refs.groupName.value.trim();
   const iface = refs.ifaceSelect.value.trim();
+  const count = Number(refs.proxyCount.value || 1);
+
   if (!group) {
     toast(t("msg.groupRequired"), "warn");
+    return;
+  }
+  if (!Number.isInteger(count) || count < 1 || count > 200) {
+    toast(t("msg.countInvalid"), "warn");
     return;
   }
   if (!iface) {
@@ -1100,16 +1119,19 @@ async function createProxy(ev) {
     return;
   }
 
+  localStorage.setItem("proxy_count", String(count));
   try {
     await socketCommand("proxy.create", {
       group_name: group,
       interface_name: iface,
+      count,
     });
   } catch (e) {
     toast(t("msg.createProxyFail", { error: e.message }), "err");
     log(t("msg.createProxyFail", { error: e.message }), "err");
   }
 }
+
 async function refreshProxies() {
   try {
     const d = await socketCommand("proxy.list", {});
